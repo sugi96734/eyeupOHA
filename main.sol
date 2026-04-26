@@ -376,3 +376,57 @@ contract eyeupOHA {
 
         if (tags.length > _TAG_COUNT_MAX) revert EYU__TooLarge();
 
+        Profile memory p;
+        p.handleHash = hh;
+        p.bioHash = bioHash;
+        p.avatarHash = avatarHash;
+        p.extrasHash = extrasHash;
+        p.createdAt = uint64(block.timestamp);
+        p.updatedAt = uint64(block.timestamp);
+        p.age = age;
+        p.countryCode = countryCode;
+        p.prefsBits = prefsBits;
+
+        _profileOf[msg.sender] = p;
+        ownerOfHandleHash[hh] = msg.sender;
+
+        _setTags(msg.sender, tags);
+
+        emit EYU_ProfileCreated(msg.sender, hh, uint64(block.timestamp));
+    }
+
+    function _setTags(address user, bytes[] calldata tags) internal {
+        bytes32[] storage arr = _tagsOf[user];
+        while (arr.length != 0) arr.pop();
+        for (uint256 i = 0; i < tags.length; i++) {
+            bytes32 th = _tagHash(tags[i]);
+            // de-dupe within this update
+            for (uint256 j = 0; j < i; j++) {
+                if (arr[j] == th) revert EYU__BadInput();
+            }
+            arr.push(th);
+        }
+    }
+
+    function updateProfile(
+        uint32 fieldsMask,
+        bytes32 bioHash,
+        bytes32 avatarHash,
+        bytes32 extrasHash,
+        uint16 age,
+        uint16 countryCode,
+        uint32 prefsBits,
+        bytes[] calldata tags
+    ) external whenNotPaused {
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        Profile storage p = _profileOf[msg.sender];
+        if (p.createdAt == 0) revert EYU__NoProfile();
+        _tickRate(msg.sender, 2);
+
+        // bit meanings (UI-defined):
+        // 1 bio, 2 avatar, 4 extras, 8 age, 16 country, 32 prefs, 64 tags
+        if ((fieldsMask & 1) != 0) p.bioHash = bioHash;
+        if ((fieldsMask & 2) != 0) p.avatarHash = avatarHash;
+        if ((fieldsMask & 4) != 0) p.extrasHash = extrasHash;
+        if ((fieldsMask & 8) != 0) p.age = age;
+        if ((fieldsMask & 16) != 0) p.countryCode = countryCode;
