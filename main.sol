@@ -430,3 +430,57 @@ contract eyeupOHA {
         if ((fieldsMask & 4) != 0) p.extrasHash = extrasHash;
         if ((fieldsMask & 8) != 0) p.age = age;
         if ((fieldsMask & 16) != 0) p.countryCode = countryCode;
+        if ((fieldsMask & 32) != 0) p.prefsBits = prefsBits;
+        if ((fieldsMask & 64) != 0) {
+            if (tags.length > _TAG_COUNT_MAX) revert EYU__TooLarge();
+            _setTags(msg.sender, tags);
+        }
+
+        p.updatedAt = uint64(block.timestamp);
+        emit EYU_ProfileUpdated(msg.sender, fieldsMask, uint64(block.timestamp));
+    }
+
+    function changeHandle(bytes calldata newHandle) external whenNotPaused {
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        Profile storage p = _profileOf[msg.sender];
+        if (p.createdAt == 0) revert EYU__NoProfile();
+        _tickRate(msg.sender, 2);
+
+        bytes memory norm = _normalizeHandle(newHandle);
+        bytes32 hh = keccak256(norm);
+        if (hh == p.handleHash) revert EYU__BadInput();
+        address taken = ownerOfHandleHash[hh];
+        if (taken != address(0)) revert EYU__HandleTaken();
+
+        bytes32 old = p.handleHash;
+        ownerOfHandleHash[old] = address(0);
+        ownerOfHandleHash[hh] = msg.sender;
+        p.handleHash = hh;
+        p.updatedAt = uint64(block.timestamp);
+
+        emit EYU_HandleChanged(msg.sender, old, hh, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // Blocking & liking
+    // =============================================================
+    function setBlocked(address target, bool v) external whenNotPaused {
+        if (target == address(0) || target == msg.sender) revert EYU__BadInput();
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        _tickRate(msg.sender, 1);
+
+        blocked[msg.sender][target] = v;
+        if (v) {
+            // break any existing match and remove likes in both directions
+            if (matched[msg.sender][target]) {
+                bytes32 tid = threadIdFor(msg.sender, target);
+                matched[msg.sender][target] = false;
+                matched[target][msg.sender] = false;
+                emit EYU_MatchBroken(msg.sender, target, tid, uint64(block.timestamp));
+            }
+            liked[msg.sender][target] = false;
+            liked[target][msg.sender] = false;
+        }
+        emit EYU_BlockSet(msg.sender, target, v, uint64(block.timestamp));
+    }
+
