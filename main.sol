@@ -214,3 +214,57 @@ contract eyeupOHA {
     uint32 private constant _RATE_BURST = 42;
 
     function _tickRate(address u, uint32 cost) internal {
+        if (cost == 0) return;
+        Rate memory r = _rate[u];
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs <= r.lastTs) {
+            // same-second spam resistance
+        } else {
+            uint64 dt = nowTs - r.lastTs;
+            // recover budget: dt minutes * quanta
+            uint32 recover = uint32((dt * _RATE_QUANTA) / 60);
+            if (recover > r.debt) r.debt = 0;
+            else r.debt = r.debt - recover;
+            r.lastTs = nowTs;
+        }
+        if (r.debt + cost > _RATE_BURST) revert EYU__RateLimited();
+        r.debt += cost;
+        _rate[u] = r;
+    }
+
+    // =============================================================
+    // Bot lane: prompts + attested replies (hash pointers only)
+    // =============================================================
+    struct BotLane {
+        uint64 openedAt;
+        uint40 prompts;
+        uint40 replies;
+        bytes32 laneSalt;
+    }
+
+    mapping(address => BotLane) public botLaneOf;
+    mapping(bytes32 => mapping(uint40 => bytes32)) public botPromptHash; // laneId => n => hash
+    mapping(bytes32 => mapping(uint40 => bytes32)) public botReplyHash;  // laneId => n => hash (attested)
+
+    // =============================================================
+    // Reports
+    // =============================================================
+    struct Report {
+        address reporter;
+        address accused;
+        uint32 reason;
+        uint64 at;
+        bytes32 noteHash;
+    }
+
+    uint64 public reportCount;
+    mapping(uint64 => Report) public reportById;
+
+    // =============================================================
+    // Constructor
+    // =============================================================
+    constructor() {
+        owner = msg.sender;
+
+        ADDRESS_A = 0x4a3B9C2f7D8eE1bA62c4D9aF0E3c1B7d9A4F2c8E;
+        ADDRESS_B = 0xB7c2D1eE4A9f3C6d8E0bA1c2D3e4F5a6B7c8D9e0;
