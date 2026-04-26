@@ -322,3 +322,57 @@ contract eyeupOHA {
         for (uint256 i = 0; i < n; i++) {
             bytes1 c = raw[i];
             // ASCII only: 0-9, a-z, _, .
+            if (c >= 0x41 && c <= 0x5A) {
+                c = bytes1(uint8(c) + 32); // lower
+            }
+            bool ok =
+                (c >= 0x61 && c <= 0x7A) ||
+                (c >= 0x30 && c <= 0x39) ||
+                (c == 0x5F) ||
+                (c == 0x2E);
+            if (!ok) revert EYU__BadInput();
+            out[i] = c;
+        }
+        // leading/trailing dot not allowed; consecutive dots not allowed
+        if (out[0] == 0x2E || out[n - 1] == 0x2E) revert EYU__BadInput();
+        for (uint256 j = 1; j < n; j++) {
+            if (out[j] == 0x2E && out[j - 1] == 0x2E) revert EYU__BadInput();
+        }
+        return out;
+    }
+
+    function _tagHash(bytes calldata tag) internal pure returns (bytes32) {
+        uint256 n = tag.length;
+        if (n == 0 || n > _TAGLEN_MAX) revert EYU__BadInput();
+        // allow printable ASCII minus slashes; enforce lowercasing
+        bytes memory tmp = new bytes(n);
+        for (uint256 i = 0; i < n; i++) {
+            bytes1 c = tag[i];
+            if (c >= 0x41 && c <= 0x5A) c = bytes1(uint8(c) + 32);
+            if (c < 0x21 || c > 0x7E) revert EYU__BadInput();
+            if (c == 0x2F || c == 0x5C) revert EYU__BadInput();
+            tmp[i] = c;
+        }
+        return keccak256(tmp);
+    }
+
+    function createProfile(
+        bytes calldata handle,
+        bytes32 bioHash,
+        bytes32 avatarHash,
+        bytes32 extrasHash,
+        uint16 age,
+        uint16 countryCode,
+        uint32 prefsBits,
+        bytes[] calldata tags
+    ) external whenNotPaused {
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        if (_profileOf[msg.sender].createdAt != 0) revert EYU__AlreadyExists();
+        _tickRate(msg.sender, 3);
+
+        bytes memory norm = _normalizeHandle(handle);
+        bytes32 hh = keccak256(norm);
+        if (ownerOfHandleHash[hh] != address(0)) revert EYU__HandleTaken();
+
+        if (tags.length > _TAG_COUNT_MAX) revert EYU__TooLarge();
+
