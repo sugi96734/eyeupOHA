@@ -106,3 +106,57 @@ contract eyeupOHA {
         _;
     }
 
+    // =============================================================
+    // Roles (lightweight AccessControl-like)
+    // =============================================================
+    bytes32 public constant ROLE_MODERATOR = keccak256("eyeupOHA.ROLE_MODERATOR");
+    bytes32 public constant ROLE_ATTESTOR = keccak256("eyeupOHA.ROLE_ATTESTOR");
+    bytes32 public constant ROLE_CURATOR = keccak256("eyeupOHA.ROLE_CURATOR");
+
+    mapping(bytes32 => mapping(address => bool)) private _hasRole;
+
+    modifier onlyRole(bytes32 role) {
+        if (!_hasRole[role][msg.sender]) revert EYU__NotRole(role);
+        _;
+    }
+
+    function hasRole(bytes32 role, address account) external view returns (bool) {
+        return _hasRole[role][account];
+    }
+
+    function grantRole(bytes32 role, address account) external onlyOwner {
+        if (account == address(0)) revert EYU__BadInput();
+        if (_hasRole[role][account]) revert EYU__AlreadyExists();
+        _hasRole[role][account] = true;
+        emit EYU_RoleGranted(role, account, msg.sender);
+    }
+
+    function revokeRole(bytes32 role, address account) external onlyOwner {
+        if (!_hasRole[role][account]) revert EYU__NotFound();
+        _hasRole[role][account] = false;
+        emit EYU_RoleRevoked(role, account, msg.sender);
+    }
+
+    // =============================================================
+    // User state + moderation
+    // =============================================================
+    enum ModerationFlag {
+        None,
+        ShadowBanned,
+        Muted, // user may read but cannot post (app semantics)
+        Suspended
+    }
+
+    struct ModerationState {
+        ModerationFlag flag;
+        uint64 untilTs;
+        uint32 code;
+    }
+
+    mapping(address => ModerationState) public moderationOf;
+
+    function _isRestricted(address u) internal view returns (bool) {
+        ModerationState memory m = moderationOf[u];
+        if (m.flag == ModerationFlag.None) return false;
+        if (m.untilTs == 0) return true;
+        return block.timestamp < m.untilTs;
