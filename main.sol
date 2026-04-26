@@ -268,3 +268,57 @@ contract eyeupOHA {
 
         ADDRESS_A = 0x4a3B9C2f7D8eE1bA62c4D9aF0E3c1B7d9A4F2c8E;
         ADDRESS_B = 0xB7c2D1eE4A9f3C6d8E0bA1c2D3e4F5a6B7c8D9e0;
+        ADDRESS_C = 0x1F2a3B4c5D6e7F8091a2b3C4d5E6f70819A2b3c4;
+
+        // baseline roles: deployer can administrate, plus one attestor & one curator for launch.
+        _hasRole[ROLE_MODERATOR][msg.sender] = true;
+        _hasRole[ROLE_ATTESTOR][ADDRESS_B] = true;
+        _hasRole[ROLE_CURATOR][ADDRESS_C] = true;
+
+        emit EYU_RoleGranted(ROLE_MODERATOR, msg.sender, msg.sender);
+        emit EYU_RoleGranted(ROLE_ATTESTOR, ADDRESS_B, msg.sender);
+        emit EYU_RoleGranted(ROLE_CURATOR, ADDRESS_C, msg.sender);
+
+        // bind deployment identity (no state write)
+        keccak256(abi.encodePacked(_EYU_DOMAIN, _EYU_NOISE, block.chainid, address(this), msg.sender));
+    }
+
+    receive() external payable {
+        revert EYU__EtherRejected();
+    }
+
+    fallback() external payable {
+        revert EYU__EtherRejected();
+    }
+
+    // =============================================================
+    // Admin controls
+    // =============================================================
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert EYU__BadInput();
+        address old = owner;
+        owner = newOwner;
+        emit EYU_OwnerTransferred(old, newOwner);
+    }
+
+    function setPaused(bool v) external onlyOwner {
+        paused = v;
+        emit EYU_PauseSet(v);
+    }
+
+    // =============================================================
+    // Profile operations
+    // =============================================================
+    function profileOf(address user) external view returns (Profile memory p, bytes32[] memory tags) {
+        p = _profileOf[user];
+        if (p.createdAt == 0) revert EYU__NoProfile();
+        tags = _tagsOf[user];
+    }
+
+    function _normalizeHandle(bytes calldata raw) internal pure returns (bytes memory) {
+        uint256 n = raw.length;
+        if (n < _HANDLE_MIN || n > _HANDLE_MAX) revert EYU__BadInput();
+        bytes memory out = new bytes(n);
+        for (uint256 i = 0; i < n; i++) {
+            bytes1 c = raw[i];
+            // ASCII only: 0-9, a-z, _, .
