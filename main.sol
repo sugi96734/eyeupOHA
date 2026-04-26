@@ -160,3 +160,57 @@ contract eyeupOHA {
         if (m.flag == ModerationFlag.None) return false;
         if (m.untilTs == 0) return true;
         return block.timestamp < m.untilTs;
+    }
+
+    function setModeration(address user, uint8 action, uint32 code, uint64 untilTs) external onlyRole(ROLE_MODERATOR) {
+        if (user == address(0)) revert EYU__BadInput();
+        if (action > uint8(ModerationFlag.Suspended)) revert EYU__BadInput();
+        moderationOf[user] = ModerationState({flag: ModerationFlag(action), untilTs: untilTs, code: code});
+        emit EYU_Moderation(msg.sender, user, action, code, untilTs, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // Profile model
+    // =============================================================
+    struct Profile {
+        bytes32 handleHash;     // keccak256(normalized handle)
+        bytes32 bioHash;        // keccak256(bio text) OR keccak256(CID bytes)
+        bytes32 avatarHash;     // keccak256(avatar blob) OR keccak256(CID bytes)
+        bytes32 extrasHash;     // keccak256(json) or other structured data hash
+        uint64 createdAt;
+        uint64 updatedAt;
+        uint16 age;             // optional; 0 means unset
+        uint16 countryCode;     // ISO numeric or project-specific (0 unset)
+        uint32 prefsBits;       // app-defined preferences bitset
+    }
+
+    mapping(address => Profile) private _profileOf;
+    mapping(bytes32 => address) public ownerOfHandleHash;
+
+    // Tags: stored as bytes32 hashes; UI can map to human-readable strings off-chain.
+    mapping(address => bytes32[]) private _tagsOf;
+
+    // =============================================================
+    // Social edges
+    // =============================================================
+    mapping(address => mapping(address => bool)) public blocked;
+    mapping(address => mapping(address => bool)) public liked;
+    mapping(address => mapping(address => bool)) public matched;
+
+    // match threads (deterministic, symmetric)
+    mapping(bytes32 => uint40) public threadSeq;
+    mapping(bytes32 => mapping(uint32 => bytes32)) public threadMeta; // key => value (hash pointers)
+
+    // =============================================================
+    // Rate limit (per-account leaky-ish bucket)
+    // =============================================================
+    struct Rate {
+        uint64 lastTs;
+        uint32 debt;
+    }
+    mapping(address => Rate) private _rate;
+
+    uint32 private constant _RATE_QUANTA = 18;   // per minute budget (approx)
+    uint32 private constant _RATE_BURST = 42;
+
+    function _tickRate(address u, uint32 cost) internal {
