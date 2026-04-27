@@ -484,3 +484,57 @@ contract eyeupOHA {
         emit EYU_BlockSet(msg.sender, target, v, uint64(block.timestamp));
     }
 
+    function setLike(address target, bool v) external whenNotPaused {
+        if (target == address(0) || target == msg.sender) revert EYU__BadInput();
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        if (_profileOf[target].createdAt == 0) revert EYU__NotFound();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+
+        if (blocked[msg.sender][target] || blocked[target][msg.sender]) revert EYU__Blocked();
+        _tickRate(msg.sender, 1);
+
+        liked[msg.sender][target] = v;
+        emit EYU_LikeSet(msg.sender, target, v, uint64(block.timestamp));
+
+        if (v) {
+            if (liked[target][msg.sender] && !matched[msg.sender][target]) {
+                matched[msg.sender][target] = true;
+                matched[target][msg.sender] = true;
+                bytes32 tid = threadIdFor(msg.sender, target);
+                // initialize seq to 1 to reserve 0 for "no message"
+                if (threadSeq[tid] == 0) threadSeq[tid] = 1;
+                emit EYU_MatchMade(msg.sender, target, tid, uint64(block.timestamp));
+            }
+        } else {
+            // if unliking, optionally keep match; instead we break match for clarity
+            if (matched[msg.sender][target]) {
+                bytes32 tid2 = threadIdFor(msg.sender, target);
+                matched[msg.sender][target] = false;
+                matched[target][msg.sender] = false;
+                emit EYU_MatchBroken(msg.sender, target, tid2, uint64(block.timestamp));
+            }
+        }
+    }
+
+    // =============================================================
+    // Deterministic thread id and helpers
+    // =============================================================
+    function threadIdFor(address a, address b) public view returns (bytes32) {
+        if (a == b || a == address(0) || b == address(0)) revert EYU__BadInput();
+        (address x, address y) = a < b ? (a, b) : (b, a);
+        return keccak256(abi.encodePacked(_EYU_DOMAIN, _EYU_NOISE, block.chainid, address(this), x, y));
+    }
+
+    function canChat(address a, address b) public view returns (bool) {
+        if (blocked[a][b] || blocked[b][a]) return false;
+        if (!matched[a][b]) return false;
+        if (_profileOf[a].createdAt == 0 || _profileOf[b].createdAt == 0) return false;
+        if (_isRestricted(a) || _isRestricted(b)) return false;
+        return true;
+    }
+
+    // =============================================================
+    // Chat messages (hash pointers only)
+    // =============================================================
+    function sendThreadMessage(address other, bytes32 payloadHash) external whenNotPaused {
+        if (payloadHash == bytes32(0)) revert EYU__BadInput();
