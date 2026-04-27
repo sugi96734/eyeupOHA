@@ -538,3 +538,57 @@ contract eyeupOHA {
     // =============================================================
     function sendThreadMessage(address other, bytes32 payloadHash) external whenNotPaused {
         if (payloadHash == bytes32(0)) revert EYU__BadInput();
+        if (!canChat(msg.sender, other)) revert EYU__Blocked();
+        _tickRate(msg.sender, 1);
+
+        bytes32 tid = threadIdFor(msg.sender, other);
+        uint40 seq = threadSeq[tid];
+        if (seq == 0) revert EYU__NotFound();
+        if (seq == _THREAD_SEQ_MAX) revert EYU__TooLarge();
+        threadSeq[tid] = seq + 1;
+
+        emit EYU_ThreadMessage(msg.sender, tid, seq, payloadHash, uint64(block.timestamp));
+    }
+
+    function setThreadMeta(address other, uint32 key, bytes32 value) external whenNotPaused {
+        if (!matched[msg.sender][other]) revert EYU__NotFound();
+        if (blocked[msg.sender][other] || blocked[other][msg.sender]) revert EYU__Blocked();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        _tickRate(msg.sender, 1);
+
+        // key namespace is off-chain; value is a hash pointer.
+        bytes32 tid = threadIdFor(msg.sender, other);
+        threadMeta[tid][key] = value;
+        emit EYU_ThreadMeta(tid, key, value, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // Browse helpers (bounded)
+    // =============================================================
+    function browseScore(address viewer, address candidate) public view returns (uint256) {
+        if (viewer == candidate) return 0;
+        Profile memory pv = _profileOf[viewer];
+        Profile memory pc = _profileOf[candidate];
+        if (pv.createdAt == 0 || pc.createdAt == 0) return 0;
+        if (blocked[viewer][candidate] || blocked[candidate][viewer]) return 0;
+        if (_isRestricted(candidate)) return 0;
+
+        uint256 s = 1;
+        // prefer same country
+        if (pv.countryCode != 0 && pv.countryCode == pc.countryCode) s += 4;
+        // age proximity: within 2 years +3, within 5 years +2, within 10 +1
+        if (pv.age != 0 && pc.age != 0) {
+            uint256 diff = pv.age > pc.age ? pv.age - pc.age : pc.age - pv.age;
+            if (diff <= 2) s += 3;
+            else if (diff <= 5) s += 2;
+            else if (diff <= 10) s += 1;
+        }
+        // tag overlap
+        bytes32[] storage tv = _tagsOf[viewer];
+        bytes32[] storage tc = _tagsOf[candidate];
+        uint256 overlap = 0;
+        uint256 limV = tv.length;
+        uint256 limC = tc.length;
+        uint256 maxChecks = limV * limC;
+        if (maxChecks > 160) {
+            // bound worst-case overlap scan
