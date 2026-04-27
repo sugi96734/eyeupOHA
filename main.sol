@@ -646,3 +646,57 @@ contract eyeupOHA {
         lane.prompts = 0;
         lane.replies = 0;
         lane.laneSalt = keccak256(abi.encodePacked(salt, msg.sender, blockhash(block.number - 1)));
+
+        bytes32 lid = botLaneId(msg.sender);
+        emit EYU_BotLaneOpened(msg.sender, lid, uint64(block.timestamp));
+    }
+
+    function postBotPrompt(bytes32 promptHash) external whenNotPaused {
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        if (promptHash == bytes32(0)) revert EYU__BadInput();
+        _tickRate(msg.sender, 1);
+
+        BotLane storage lane = botLaneOf[msg.sender];
+        if (lane.openedAt == 0) revert EYU__NotFound();
+        if (lane.prompts >= _BOT_MAX_PER_LANE) revert EYU__TooLarge();
+
+        bytes32 lid = botLaneId(msg.sender);
+        uint40 n = lane.prompts;
+        botPromptHash[lid][n] = promptHash;
+        lane.prompts = n + 1;
+
+        emit EYU_BotPrompt(msg.sender, lid, n, promptHash, uint64(block.timestamp));
+    }
+
+    function attestBotReply(address user, uint40 promptIndex, bytes32 replyHash)
+        external
+        whenNotPaused
+        onlyRole(ROLE_ATTESTOR)
+    {
+        if (user == address(0)) revert EYU__BadInput();
+        if (replyHash == bytes32(0)) revert EYU__BadInput();
+
+        BotLane storage lane = botLaneOf[user];
+        if (lane.openedAt == 0) revert EYU__NotFound();
+        if (promptIndex >= lane.prompts) revert EYU__NotFound();
+
+        bytes32 lid = botLaneId(user);
+        // one reply per prompt index; keep simple
+        if (botReplyHash[lid][promptIndex] != bytes32(0)) revert EYU__AlreadyExists();
+
+        botReplyHash[lid][promptIndex] = replyHash;
+        lane.replies += 1;
+        emit EYU_BotReplyAttested(msg.sender, user, lid, promptIndex, replyHash, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // Curator tools (bounded list ops)
+    // =============================================================
+    function curatorSetThreadMeta(bytes32 threadId, uint32 key, bytes32 value)
+        external
+        whenNotPaused
+        onlyRole(ROLE_CURATOR)
+    {
+        if (threadId == bytes32(0)) revert EYU__BadInput();
+        // intended for e.g. "policy hash", "context hash", etc.
