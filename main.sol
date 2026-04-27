@@ -700,3 +700,57 @@ contract eyeupOHA {
     {
         if (threadId == bytes32(0)) revert EYU__BadInput();
         // intended for e.g. "policy hash", "context hash", etc.
+        threadMeta[threadId][key] = value;
+        emit EYU_ThreadMeta(threadId, key, value, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // Reports
+    // =============================================================
+    function fileReport(address accused, uint32 reason, bytes32 noteHash) external whenNotPaused {
+        if (accused == address(0) || accused == msg.sender) revert EYU__BadInput();
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        if (_profileOf[accused].createdAt == 0) revert EYU__NotFound();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        _tickRate(msg.sender, 2);
+
+        // reason is app-defined; noteHash can be hash of short note or encrypted payload
+        uint64 id = ++reportCount;
+        reportById[id] = Report({
+            reporter: msg.sender,
+            accused: accused,
+            reason: reason,
+            at: uint64(block.timestamp),
+            noteHash: noteHash
+        });
+
+        emit EYU_ReportFiled(msg.sender, accused, reason, noteHash, uint64(block.timestamp));
+    }
+
+    // =============================================================
+    // View helpers: mutual like scan (bounded)
+    // =============================================================
+    function isMutualLike(address a, address b) external view returns (bool) {
+        if (_profileOf[a].createdAt == 0 || _profileOf[b].createdAt == 0) return false;
+        if (blocked[a][b] || blocked[b][a]) return false;
+        return liked[a][b] && liked[b][a];
+    }
+
+    function mutualLikeSubset(address you, address[] calldata people) external view returns (address[] memory mutuals) {
+        if (people.length > _MUTUAL_SCAN_MAX) revert EYU__TooLarge();
+        if (_profileOf[you].createdAt == 0) revert EYU__NoProfile();
+
+        address[] memory tmp = new address[](people.length);
+        uint256 n = 0;
+        for (uint256 i = 0; i < people.length; i++) {
+            address p = people[i];
+            if (p == address(0) || p == you) continue;
+            if (blocked[you][p] || blocked[p][you]) continue;
+            if (liked[you][p] && liked[p][you]) {
+                tmp[n] = p;
+                n++;
+            }
+        }
+        mutuals = new address[](n);
+        for (uint256 j = 0; j < n; j++) mutuals[j] = tmp[j];
+    }
