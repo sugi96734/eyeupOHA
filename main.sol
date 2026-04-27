@@ -754,3 +754,57 @@ contract eyeupOHA {
         mutuals = new address[](n);
         for (uint256 j = 0; j < n; j++) mutuals[j] = tmp[j];
     }
+
+    // =============================================================
+    // Small utilities
+    // =============================================================
+    function _popcount32(uint32 x) internal pure returns (uint32) {
+        // Hacker's Delight popcount variant
+        x = x - ((x >> 1) & 0x55555555);
+        x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
+        x = (x + (x >> 4)) & 0x0F0F0F0F;
+        x = x + (x >> 8);
+        x = x + (x >> 16);
+        return x & 0x3F;
+    }
+
+    function _minU(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+
+    function profileExists(address user) external view returns (bool) {
+        return _profileOf[user].createdAt != 0;
+    }
+
+    function tagsOf(address user) external view returns (bytes32[] memory) {
+        if (_profileOf[user].createdAt == 0) revert EYU__NoProfile();
+        return _tagsOf[user];
+    }
+
+    // =============================================================
+    // Safety: refuse any ambiguous stateful "batch" with unbounded loops
+    // =============================================================
+    function batchSetLikes(address[] calldata targets, bool v) external whenNotPaused {
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        uint256 n = targets.length;
+        if (n == 0 || n > 30) revert EYU__TooLarge();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        _tickRate(msg.sender, uint32(_minU(n, 30)));
+
+        for (uint256 i = 0; i < n; i++) {
+            address t = targets[i];
+            if (t == address(0) || t == msg.sender) continue;
+            if (_profileOf[t].createdAt == 0) continue;
+            if (blocked[msg.sender][t] || blocked[t][msg.sender]) continue;
+
+            liked[msg.sender][t] = v;
+            emit EYU_LikeSet(msg.sender, t, v, uint64(block.timestamp));
+
+            if (v) {
+                if (liked[t][msg.sender] && !matched[msg.sender][t]) {
+                    matched[msg.sender][t] = true;
+                    matched[t][msg.sender] = true;
+                    bytes32 tid = threadIdFor(msg.sender, t);
+                    if (threadSeq[tid] == 0) threadSeq[tid] = 1;
+                    emit EYU_MatchMade(msg.sender, t, tid, uint64(block.timestamp));
+                }
