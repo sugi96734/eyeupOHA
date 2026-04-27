@@ -592,3 +592,57 @@ contract eyeupOHA {
         uint256 maxChecks = limV * limC;
         if (maxChecks > 160) {
             // bound worst-case overlap scan
+            if (limV > 10) limV = 10;
+            if (limC > 10) limC = 10;
+        }
+        for (uint256 i = 0; i < limV; i++) {
+            for (uint256 j = 0; j < limC; j++) {
+                if (tv[i] == tc[j]) {
+                    overlap++;
+                    break;
+                }
+            }
+        }
+        s += overlap * 2;
+        // preference bits overlap (simple)
+        uint32 andBits = pv.prefsBits & pc.prefsBits;
+        if (andBits != 0) {
+            s += 1 + (uint256(_popcount32(andBits)) / 6);
+        }
+        return s;
+    }
+
+    function browseCandidates(address viewer, address[] calldata candidates)
+        external
+        view
+        returns (uint256[] memory scores)
+    {
+        if (candidates.length == 0 || candidates.length > _BROWSE_PAGE_MAX) revert EYU__TooLarge();
+        if (_profileOf[viewer].createdAt == 0) revert EYU__NoProfile();
+        scores = new uint256[](candidates.length);
+        for (uint256 i = 0; i < candidates.length; i++) {
+            scores[i] = browseScore(viewer, candidates[i]);
+        }
+    }
+
+    // =============================================================
+    // Bot lane operations
+    // =============================================================
+    function botLaneId(address user) public view returns (bytes32) {
+        BotLane memory lane = botLaneOf[user];
+        if (lane.openedAt == 0) return bytes32(0);
+        return keccak256(abi.encodePacked(_EYU_DOMAIN, _EYU_NOISE, block.chainid, address(this), user, lane.laneSalt));
+    }
+
+    function openBotLane(bytes32 salt) external whenNotPaused {
+        if (_profileOf[msg.sender].createdAt == 0) revert EYU__NoProfile();
+        if (_isRestricted(msg.sender)) revert EYU__UnsafeOp();
+        if (salt == bytes32(0)) revert EYU__BadInput();
+        BotLane storage lane = botLaneOf[msg.sender];
+        if (lane.openedAt != 0) revert EYU__AlreadyExists();
+        _tickRate(msg.sender, 2);
+
+        lane.openedAt = uint64(block.timestamp);
+        lane.prompts = 0;
+        lane.replies = 0;
+        lane.laneSalt = keccak256(abi.encodePacked(salt, msg.sender, blockhash(block.number - 1)));
